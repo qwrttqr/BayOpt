@@ -15,7 +15,7 @@ class GPRegressor:
     """
 
     def __init__(self, mean_args: dict, correlation_args: dict, mean_function: Callable, correlation_func: Callable,
-                 noise: float = 0, return_stds=False):
+                 noise: float = 0):
         self.mean_args = mean_args
         self.corr_args = correlation_args
         self.mean_function = mean_function
@@ -28,7 +28,6 @@ class GPRegressor:
         self.inv_cov_training_training = None
         self.x_training = None
         self.y_training = None
-        self.return_stds = return_stds
 
     def calc_corr_matr(self, a: np.ndarray, b: np.ndarray = None) -> np.ndarray:
         b = a if b is None else b
@@ -45,26 +44,22 @@ class GPRegressor:
         self.cov_training_training = self.calc_corr_matr(x, x)
         self.inv_cov_training_training = np.linalg.inv(self.cov_training_training)
 
-    def predict(self, x: np.ndarray):
-        cov_training_predict = self.calc_corr_matr(x, self.x_training)
+    def predict(self, x: np.ndarray, return_stds: bool = False):
+        # Covariance between training and new points
+        cov_training_predict = self.calc_corr_matr(self.x_training, x)
         cov_predict_predict = self.calc_corr_matr(x, x)
-        mean_x_predict = self.mean_function(x)
-        predictions = mean_x_predict + np.dot(np.dot(cov_training_predict, self.inv_cov_training_training),
-                                              (self.y_training - self.mean_x_training))
-        prediction_stds = None
-        if self.return_stds:
-            prediction_stds = np.diag(
-                cov_predict_predict - np.dot(self.inv_cov_training_training,
-                                             np.transpose(cov_training_predict)))
-            return predictions, prediction_stds
+        mean_x_predict = self.mean_function(x, **self.mean_args)
+
+        # GP mean
+        predictions = mean_x_predict + cov_training_predict.T @ self.inv_cov_training_training @ (
+                self.y_training - self.mean_x_training
+        )
+
+        if return_stds:
+            # Compute the covariance of the predictions
+            cov = cov_predict_predict - cov_training_predict.T @ self.inv_cov_training_training @ cov_training_predict
+            prediction_stds = np.sqrt(np.maximum(np.diag(cov), 0))
+            return predictions, prediction_stds.reshape(-1, 1)
         else:
             return predictions
 
-
-def priormean(xin, **kwargs):
-    c2 = kwargs['c2']
-    return c2 * xin ** 2
-
-def corr_func(a: np.ndarray, b: np.ndarray, sigmaf2=1.0, ell=1.0):
-    diff = a[:, None] - b[None, :]
-    return sigmaf2 * np.exp(-diff ** 2 / (2 * ell ** 2))
